@@ -1,0 +1,20 @@
+{
+  "name": "NestNyx",
+  "description": "Shared-folder-scoped rclone execution API for Nyx",
+  "repository": "https://github.com/linuxofpower/NestNyx",
+  "keywords": ["nestjs", "rclone", "google-drive", "nyx"],
+  "env": {
+    "NYX_API_KEY": {
+      "description": "Secret key required in the X-Nyx-Key header.",
+      "generator": "secret"
+    },
+    "RCLONE_CONFIG_B64": {
+      "description": "Base64-encoded rclone.conf. Keep this only in Heroku config vars.",
+      "required": true
+    },
+    "NYX_SHARED_ROOTS_JSON": {
+      "description": "JSON map of logical area names to rclone remote/root and optional expectedOwner.",
+      "required": true
+    }
+  }
+}
