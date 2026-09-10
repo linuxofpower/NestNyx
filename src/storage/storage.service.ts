@@ -14,6 +14,11 @@ export class StorageService {
     return this.roots.listAreas();
   }
 
+  validateCopyPayload(payload: CopyJobPayload) {
+    this.validateFileRef(payload.source, 'source');
+    this.validateFileRef(payload.destination, 'destination');
+  }
+
   async capacity() {
     const areas = this.roots.listAreas();
     const remoteAreas = new Map<string, string[]>();
@@ -76,14 +81,14 @@ export class StorageService {
   }
 
   async executeCopy(payload: CopyJobPayload) {
-    this.validateFileRef(payload.source, 'source');
-    this.validateFileRef(payload.destination, 'destination');
+    this.validateCopyPayload(payload);
 
     const source = this.roots.resolve(payload.source.area, payload.source.path);
     const destination = this.roots.resolve(payload.destination.area, payload.destination.path);
 
     await this.rclone.run([
       'copyto', source, destination,
+      '--immutable',
       '--stats=30s', '--stats-one-line', '--log-level=INFO',
     ]);
 
@@ -98,6 +103,7 @@ export class StorageService {
     return {
       source: payload.source,
       destination: payload.destination,
+      sourceRetained: true,
       verification,
       destinationStat,
     };
