@@ -9,6 +9,6 @@ import { StorageService } from './storage.service';
 @Module({
   controllers: [StorageController],
   providers: [RcloneService, SharedRootsService, StorageService, JobStoreService, JobWorkerService],
-  exports: [RcloneService, JobStoreService],
+  exports: [RcloneService, SharedRootsService, StorageService, JobStoreService],
 })
 export class StorageModule {}
