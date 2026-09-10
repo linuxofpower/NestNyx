@@ -1,16 +1,32 @@
 {
   "name": "NestNyx",
-  "description": "Shared-folder-scoped rclone execution API and MCP server for Nyx",
+  "description": "Shared-folder-scoped rclone execution API and OAuth-protected MCP server for Nyx",
   "repository": "https://github.com/linuxofpower/NestNyx",
-  "keywords": ["nestjs", "mcp", "rclone", "google-drive", "nyx"],
+  "keywords": ["nestjs", "mcp", "oauth", "rclone", "google-drive", "nyx"],
   "env": {
     "NYX_API_KEY": {
       "description": "Secret key required in the X-Nyx-Key header for the REST API.",
       "generator": "secret"
     },
-    "NYX_MCP_TOKEN": {
-      "description": "Secret token protecting the MCP endpoint. Use a long random value and never commit it.",
-      "generator": "secret"
+    "NYX_PUBLIC_URL": {
+      "description": "Public HTTPS origin of this Heroku app, for example https://your-app.herokuapp.com.",
+      "required": true
+    },
+    "NYX_OAUTH_ISSUER": {
+      "description": "OAuth/OIDC issuer URL used by ChatGPT to authorize access to the MCP server.",
+      "required": true
+    },
+    "NYX_OAUTH_AUDIENCE": {
+      "description": "Audience/resource identifier that NestNyx requires in MCP access tokens.",
+      "required": true
+    },
+    "NYX_OAUTH_JWKS_URI": {
+      "description": "Optional JWKS endpoint override. Leave unset for issuer/.well-known/jwks.json.",
+      "required": false
+    },
+    "NYX_OAUTH_SCOPES": {
+      "description": "Comma-separated MCP scopes. Defaults to nyx.read,nyx.write.",
+      "value": "nyx.read,nyx.write"
     },
     "RCLONE_CONFIG_B64": {
       "description": "Base64-encoded rclone.conf. Keep this only in Heroku config vars.",
