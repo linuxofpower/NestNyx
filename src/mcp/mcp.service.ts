@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
@@ -23,20 +22,14 @@ export class McpService {
     });
   }
 
-  async handle(req: Request, res: Response, parsedBody: unknown, pathToken?: string) {
-    if (!this.authorized(req, pathToken)) {
-      // Deliberately hide the existence of the private MCP endpoint.
-      res.status(404).end();
-      return;
-    }
-
+  async handle(req: Request, res: Response, parsedBody: unknown) {
     await this.nodeHandler(req, res, parsedBody);
   }
 
   private buildServer() {
     const server = new McpServer({
       name: 'NestNyx',
-      version: '0.2.0',
+      version: '0.3.0',
     });
 
     server.registerTool(
@@ -183,21 +176,5 @@ export class McpService {
         content: [{ type: 'text' as const, text: message }],
       };
     }
-  }
-
-  private authorized(req: Request, pathToken?: string): boolean {
-    const expected = process.env.NYX_MCP_TOKEN;
-    if (!expected) return false;
-
-    const authorization = req.headers.authorization;
-    const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
-    const header = req.headers['x-nyx-mcp-token'];
-    const headerToken = Array.isArray(header) ? header[0] : header;
-    const provided = pathToken || bearer || headerToken;
-    if (!provided) return false;
-
-    const a = Buffer.from(provided);
-    const b = Buffer.from(expected);
-    return a.length === b.length && timingSafeEqual(a, b);
   }
 }
