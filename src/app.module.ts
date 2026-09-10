@@ -2,10 +2,11 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ApiKeyGuard } from './common/api-key.guard';
 import { HealthController } from './health.controller';
+import { McpModule } from './mcp/mcp.module';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
-  imports: [StorageModule],
+  imports: [StorageModule, McpModule],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ApiKeyGuard }],
 })

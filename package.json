@@ -1,8 +1,8 @@
 {
   "name": "nestnyx",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Nyx storage execution API for shared-folder-scoped rclone operations",
+  "description": "Nyx storage execution API and MCP server for shared-folder-scoped rclone operations",
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": "22.x"
@@ -16,13 +16,16 @@
     "start:prod": "node dist/main.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-express": "^11.1.6",
     "adm-zip": "^0.5.16",
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "zod": "^4.1.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",
