@@ -15,6 +15,11 @@ export class StorageController {
     return { areas: this.storage.areas() };
   }
 
+  @Get('capacity')
+  capacity() {
+    return this.storage.capacity();
+  }
+
   @Get(':area/list')
   list(@Param('area') area: string, @Query('path') path = '') {
     return this.storage.list(area, path);

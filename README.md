@@ -13,11 +13,33 @@ The boundary is deliberate: **the API never accepts arbitrary rclone remote name
 - Keeps `rclone.conf` out of Git; provide it as a Heroku config var.
 - Maps logical areas such as `A`, `B`, `C`, `D` to shared-folder roots at runtime.
 - Lists and stats files only below those roots.
+- Reports aggregate account capacity for the remotes backing those shared roots, while keeping file operations scoped to the shared folders.
 - Queues cross-account file copies.
 - After every copy, reads source/destination hashes, size, and destination owner.
 - Marks a copy `trusted` only when size, a common hash, and the configured expected destination owner all match.
 - Does **not** delete source files. Cleanup is intentionally a later, separate capability.
 - If `DATABASE_URL` is configured, jobs are persisted in Postgres and interrupted `running` jobs are re-queued when the app starts.
+
+## Architecture
+
+```text
+ChatGPT / Nyx
+    |
+    | inspect + plan against shared Google Drive folders
+    v
+NestNyx on Heroku
+    |
+    | validated API request
+    v
+rclone
+    |
+    +--> Google Drive account A
+    +--> Google Drive account B
+    +--> Google Drive account C
+    +--> Google Drive account D
+```
+
+The shared folders are the GPT-visible control surface. The rclone remotes are the execution/data plane. A plan references only logical areas and relative paths; NestNyx owns the private mapping from those areas to rclone remotes.
 
 ## Required config vars
 
@@ -78,6 +100,14 @@ List configured logical areas:
 curl -H "X-Nyx-Key: $NYX_API_KEY" http://localhost:3000/storage/areas
 ```
 
+Read total/used/free quota across the unique rclone remotes backing the configured shared roots:
+
+```bash
+curl -H "X-Nyx-Key: $NYX_API_KEY" http://localhost:3000/storage/capacity
+```
+
+Capacity is account-level information reported by rclone. It does not widen the API boundary: listing, stat, and copy operations remain restricted to the configured shared-folder roots.
+
 List a shared-folder path:
 
 ```bash
@@ -124,6 +154,24 @@ heroku addons:create heroku-postgresql:essential-0 -a YOUR_APP_NAME
 Then configure secrets and mappings in the Heroku dashboard or CLI. Do not put them in GitHub.
 
 For the first deployment, use a tiny disposable file and confirm the returned verification reports the expected destination owner. Only after that should larger archive transfers be queued.
+
+## Filling the multi-account pool
+
+The intended workflow for using capacity spread across several Google accounts is:
+
+```text
+PLAN IN CHATGPT
+  -> inspect only shared folders
+  -> query /storage/capacity
+  -> choose a destination area with enough free quota
+  -> POST a copy job
+  -> NestNyx validates both paths are below configured shared roots
+  -> rclone copies account-to-account
+  -> NestNyx checks size + common hash + destination owner
+  -> persist evidence
+```
+
+V0 fills additional account space by making verified copies. Source deletion is deliberately not coupled to copy because a successful transfer alone is not enough evidence for destructive cleanup.
 
 ## Safety contract
 
