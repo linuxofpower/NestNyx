@@ -1,5 +1,7 @@
 # NestNyx
 
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/linuxofpower/NestNyx)
+
 NestNyx is the execution side of Nyx storage operations. ChatGPT can inspect and plan against explicitly shared Google Drive folders; NestNyx executes a small allow-listed set of `rclone` operations against those same logical shared-folder roots.
 
 The boundary is deliberate: **the API never accepts arbitrary rclone remote names or unrestricted Drive roots**. Every path is resolved below a configured shared folder.
@@ -109,7 +111,9 @@ A successful verified result includes the destination owner and `trusted: true`.
 
 ## Heroku deployment from GitHub
 
-Heroku can deploy this repository through its GitHub integration. The app binds to Heroku's `PORT`, and the root `Procfile` starts the compiled NestJS service.
+Use the **Deploy to Heroku** button at the top of this README, or connect this repository from an existing Heroku app's **Deploy -> GitHub** tab. Heroku's GitHub integration can build and release pushes to the selected branch.
+
+The app binds to Heroku's `PORT`, and the root `Procfile` starts the compiled NestJS service.
 
 Before moving large files, configure durable jobs by provisioning Heroku Postgres and letting Heroku supply `DATABASE_URL`:
 
