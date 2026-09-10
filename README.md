@@ -6,22 +6,23 @@ NestNyx is the execution side of Nyx storage operations. ChatGPT can inspect exp
 
 The boundary is deliberate: **neither REST nor MCP accepts arbitrary rclone remote names or unrestricted Drive roots**. Every path is resolved below a configured shared folder.
 
-## V0 capabilities
+## V0.3 capabilities
 
 - NestJS HTTP API suitable for Heroku.
-- Remote MCP endpoint suitable for AI hosts that support MCP over HTTP.
-- MCP v2 server using the official Model Context Protocol TypeScript SDK, with compatibility for 2025-era stateless clients.
+- Remote MCP endpoint using the official Model Context Protocol TypeScript SDK.
+- OAuth-protected `/mcp` resource-server boundary for ChatGPT Business/Enterprise/Edu custom apps.
+- RFC 9728-style protected-resource discovery at `/.well-known/oauth-protected-resource`.
+- JWT access-token validation against an external OAuth/OIDC issuer and JWKS.
 - Installs the official rclone binary during the Node build.
 - Keeps `rclone.conf` out of Git; provide it as a Heroku config var.
 - Maps logical areas such as `A`, `B`, `C`, `D` to shared-folder roots at runtime.
-- Lists and stats files only below those roots.
-- Reports aggregate account capacity for the remotes backing those shared roots, while keeping file operations scoped to the shared folders.
-- Queues cross-account file copies from MCP or REST.
+- Lists/stats only below configured roots.
+- Reports account capacity for remotes backing configured roots.
+- Queues cross-account file copies.
 - Refuses destination clobbering with rclone `--immutable`.
-- After every copy, reads source/destination hashes, size, and destination owner.
-- Marks a copy `trusted` only when size, a common hash, and the configured expected destination owner all match.
-- Does **not** delete source files. Cleanup is intentionally a later, separate capability.
-- If `DATABASE_URL` is configured, jobs are persisted in Postgres and interrupted `running` jobs are re-queued when the app starts.
+- Verifies copied size, a common hash, and destination owner.
+- Does **not** delete source files.
+- Uses Postgres for durable jobs when `DATABASE_URL` is present.
 
 ## Architecture
 
@@ -31,35 +32,40 @@ ChatGPT / Nyx
     | Google Drive connector: inspect shared folders
     | NestNyx MCP: request approved actions
     v
-NestNyx on Heroku
+OAuth-protected /mcp on Heroku
     |
-    | validate logical area + relative path
+    v
+NestNyx storage services
+    |
     v
 rclone
     |
-    +--> Google Drive account A
-    +--> Google Drive account B
-    +--> Google Drive account C
-    +--> Google Drive account D
+    +--> Google Drive A
+    +--> Google Drive B
+    +--> Google Drive C
+    +--> Google Drive D
 ```
 
-The shared folders are the GPT-visible control surface. The rclone remotes are the private execution/data plane. A tool call references only logical areas and relative paths; NestNyx owns the private mapping from those areas to rclone remotes.
+Shared folders are the GPT-visible control surface. Private rclone remotes are the execution/data plane.
 
-## Required config vars
+## MCP tools
 
-`NYX_API_KEY`
-: Secret sent as `X-Nyx-Key` on every protected REST storage API call.
+- `nyx_areas` — list configured logical shared areas.
+- `nyx_list` — list files/folders below one shared root.
+- `nyx_stat` — inspect metadata, hashes, size, and owner.
+- `nyx_capacity` — report account quota information.
+- `nyx_copy_file` — queue a verified cross-area copy; source retained.
+- `nyx_job_status` — read job state and verification evidence.
 
-`NYX_MCP_TOKEN`
-: Separate long random token protecting the MCP endpoint. For the initial private V0, ChatGPT can be configured with the secret-bearing endpoint URL `https://YOUR-APP.herokuapp.com/mcp/NYX_MCP_TOKEN`. Treat that URL itself as a credential and rotate the token if it is exposed. OAuth should replace this URL-token mechanism before wider/shared use.
+## Heroku config vars
+
+### Storage
 
 `RCLONE_CONFIG_B64`
-: Base64 of your existing `rclone.conf`. Never commit the decoded or encoded config to Git.
+: Base64 of the existing `rclone.conf`. Never commit it.
 
 `NYX_SHARED_ROOTS_JSON`
-: Logical names mapped to rclone remotes and shared folders. Use real remote names and owner emails only in Heroku config vars, not in this public repository.
-
-Example shape:
+: Logical shared-area mapping. Example only:
 
 ```json
 {
@@ -68,182 +74,97 @@ Example shape:
 }
 ```
 
-Remote names in this JSON must match names inside the uploaded rclone configuration.
+`NYX_API_KEY`
+: Optional separate secret used by the protected REST storage API.
 
-## Local preparation
+### MCP OAuth
 
-Encode the existing config without printing its contents:
+`NYX_PUBLIC_URL`
+: Public HTTPS origin, e.g. `https://your-app.herokuapp.com`.
+
+`NYX_OAUTH_ISSUER`
+: External OAuth/OIDC issuer URL.
+
+`NYX_OAUTH_AUDIENCE`
+: Audience/resource identifier required in access tokens.
+
+`NYX_OAUTH_JWKS_URI`
+: Optional JWKS override. If omitted, NestNyx reads `${NYX_OAUTH_ISSUER}/.well-known/jwks.json`.
+
+`NYX_OAUTH_SCOPES`
+: Comma-separated scopes required by the MCP endpoint; defaults to `nyx.read,nyx.write`.
+
+The production MCP endpoint is simply:
+
+```text
+https://YOUR-APP.herokuapp.com/mcp
+```
+
+Do not put secrets in the URL. ChatGPT authenticates with OAuth and sends `Authorization: Bearer <access_token>`.
+
+## Prepare rclone config
+
+On the machine that already has the tested rclone remotes:
 
 ```bash
 base64 -w0 ~/.config/rclone/rclone.conf > /tmp/rclone-config.b64
 ```
 
-Generate local secrets:
+Paste that value only into Heroku `RCLONE_CONFIG_B64`.
+
+## Business-compatible OAuth setup
+
+NestNyx is an OAuth **resource server**. Use a real OAuth/OIDC provider (for example Auth0, Okta, Entra ID, or another standards-compliant provider) as the authorization server.
+
+Configure that provider so access tokens:
+
+- are JWTs signed by a published JWKS;
+- use the exact issuer configured in `NYX_OAUTH_ISSUER`;
+- contain the audience configured in `NYX_OAUTH_AUDIENCE`;
+- grant `nyx.read` and `nyx.write` scopes;
+- can issue refresh tokens (`offline_access`) so ChatGPT can remain connected.
+
+When creating the custom app in ChatGPT, use OAuth authentication, copy the exact ChatGPT callback URL into the provider's allowed callback/redirect URLs, then enter the provider client ID and client secret in ChatGPT and run **Scan Tools**.
+
+## OAuth discovery smoke test
+
+After deployment:
 
 ```bash
-export NYX_API_KEY="$(openssl rand -hex 32)"
-export NYX_MCP_TOKEN="$(openssl rand -hex 32)"
+curl https://YOUR-APP.herokuapp.com/.well-known/oauth-protected-resource
 ```
 
-Set the remaining local variables:
+It should return JSON containing the MCP resource URL, authorization-server issuer, and supported scopes.
+
+Calling `/mcp` without a bearer token should return `401` with a `WWW-Authenticate` header pointing at the protected-resource metadata.
+
+## REST smoke tests
+
+Health is public:
 
 ```bash
-export RCLONE_CONFIG_B64="$(cat /tmp/rclone-config.b64)"
-export NYX_SHARED_ROOTS_JSON='{"A":{"remote":"drive_a","root":"A_Shared","expectedOwner":"account-a@example.com"}}'
+curl https://YOUR-APP.herokuapp.com/health
 ```
 
-Then:
+Protected REST endpoints use `X-Nyx-Key`:
 
 ```bash
-npm install
-npm run start:dev
+curl -H "X-Nyx-Key: $NYX_API_KEY" https://YOUR-APP.herokuapp.com/storage/areas
+curl -H "X-Nyx-Key: $NYX_API_KEY" https://YOUR-APP.herokuapp.com/storage/capacity
+curl -H "X-Nyx-Key: $NYX_API_KEY" https://YOUR-APP.herokuapp.com/storage/B/list
 ```
 
-## MCP endpoint
-
-Two endpoint forms are available:
+## Safe copy lifecycle
 
 ```text
-/mcp
-/mcp/:token
+PLAN
+  -> VALIDATE SHARED ROOTS
+  -> QUEUE COPY
+  -> RCLONE COPY (NO CLOBBER)
+  -> READBACK
+  -> HASH/SIZE CHECK
+  -> DESTINATION OWNER CHECK
+  -> PERSIST EVIDENCE
 ```
 
-`/mcp` accepts `Authorization: Bearer <NYX_MCP_TOKEN>` or `X-Nyx-MCP-Token: <NYX_MCP_TOKEN>` for manual clients.
-
-For the initial ChatGPT V0, use the secret URL form:
-
-```text
-https://YOUR-APP.herokuapp.com/mcp/YOUR_NYX_MCP_TOKEN
-```
-
-The MCP route is excluded from the REST API-key guard and performs its own constant-time token check. Invalid tokens return `404` so the private endpoint is not advertised.
-
-### MCP tools
-
-`nyx_areas`
-: List configured logical shared-folder areas.
-
-`nyx_list`
-: List files/folders below one configured shared root.
-
-`nyx_stat`
-: Read size, hashes, metadata, and owner for one file below a configured shared root.
-
-`nyx_capacity`
-: Read account quota information for the unique rclone remotes backing the configured areas.
-
-`nyx_copy_file`
-: Queue a cross-area copy. Destination overwrite is refused, source is retained, and the worker verifies size + common hash + destination owner.
-
-`nyx_job_status`
-: Read queued/running/succeeded/failed state plus verification evidence.
-
-### MCP smoke test
-
-After starting locally, list the available tools with an MCP client/inspector, or send a protocol request to the protected endpoint. The recommended production test is to connect an MCP host and call `nyx_areas`, then `nyx_list` on one area before any write action.
-
-## REST API
-
-Health does not require the API key:
-
-```bash
-curl http://localhost:3000/health
-```
-
-List configured logical areas:
-
-```bash
-curl -H "X-Nyx-Key: $NYX_API_KEY" http://localhost:3000/storage/areas
-```
-
-Read total/used/free quota across the unique rclone remotes backing the configured shared roots:
-
-```bash
-curl -H "X-Nyx-Key: $NYX_API_KEY" http://localhost:3000/storage/capacity
-```
-
-Capacity is account-level information reported by rclone. It does not widen the API boundary: listing, stat, and copy operations remain restricted to the configured shared-folder roots.
-
-List a shared-folder path:
-
-```bash
-curl -G -H "X-Nyx-Key: $NYX_API_KEY" \
-  --data-urlencode 'path=archives' \
-  http://localhost:3000/storage/A/list
-```
-
-Queue a file copy:
-
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -H "X-Nyx-Key: $NYX_API_KEY" \
-  http://localhost:3000/storage/jobs/copy-file \
-  -d '{
-    "source":{"area":"A","path":"incoming/example.zip"},
-    "destination":{"area":"B","path":"archive/example.zip"},
-    "verify":true
-  }'
-```
-
-Poll the returned job ID:
-
-```bash
-curl -H "X-Nyx-Key: $NYX_API_KEY" \
-  http://localhost:3000/storage/jobs/JOB_ID
-```
-
-A successful verified result includes the destination owner and `trusted: true`.
-
-## Heroku deployment from GitHub
-
-Use the **Deploy to Heroku** button at the top of this README, or connect this repository from an existing Heroku app's **Deploy -> GitHub** tab. Heroku's GitHub integration can build and release pushes to the selected branch.
-
-The app binds to Heroku's `PORT`, and the root `Procfile` starts the compiled NestJS service.
-
-Before moving large files, configure durable jobs by provisioning Heroku Postgres and letting Heroku supply `DATABASE_URL`:
-
-```bash
-heroku addons:create heroku-postgresql:essential-0 -a YOUR_APP_NAME
-```
-
-Then configure secrets and mappings in the Heroku dashboard or CLI. Do not put them in GitHub.
-
-For the first deployment, call `nyx_areas` and `nyx_list`, then use one tiny disposable A -> B copy and confirm the returned verification reports the expected destination owner. Only after that should larger archive transfers be queued.
-
-## ChatGPT connection
-
-NestNyx is now shaped as a remote MCP server. In ChatGPT Developer Mode, create a custom app/connector using the protected MCP endpoint URL and scan its tools. For the V0 secret-URL endpoint, choose no additional authentication because the random path segment itself is the bearer credential. Do not publish or share that URL.
-
-For a production-quality multi-user connector, replace the URL token with OAuth/OIDC and short-lived access tokens.
-
-Important product note: ChatGPT plan support for custom MCP write actions is controlled by ChatGPT, not NestNyx. If the current ChatGPT plan only allows read/fetch MCP tools, `nyx_copy_file` will not be callable from ChatGPT even though the server exposes it. The same MCP server can still be tested with another MCP client.
-
-## Filling the multi-account pool
-
-The intended workflow for using capacity spread across several Google accounts is:
-
-```text
-PLAN IN CHATGPT
-  -> inspect only shared folders
-  -> call nyx_capacity
-  -> choose a destination area with enough free quota
-  -> call nyx_copy_file
-  -> NestNyx validates both paths are below configured shared roots
-  -> rclone copies account-to-account
-  -> NestNyx checks size + common hash + destination owner
-  -> persist evidence
-  -> call nyx_job_status until terminal
-```
-
-V0 fills additional account space by making verified copies. Source deletion is deliberately not coupled to copy because a successful transfer alone is not enough evidence for destructive cleanup.
-
-## Safety contract
-
-V0 intentionally implements:
-
-```text
-PLAN -> VALIDATE SHARED ROOTS -> COPY (NO CLOBBER) -> READBACK -> HASH/SIZE CHECK -> OWNER CHECK -> EVIDENCE
-```
-
-There is no source-delete or move endpoint yet. A later cleanup workflow can be added only after copy evidence has been persisted and independently accepted.
+There is deliberately no source-delete or move endpoint yet. We first prove end-to-end ChatGPT -> OAuth -> MCP -> NestNyx -> rclone copying and verification before adding cleanup.
