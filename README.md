@@ -15,7 +15,7 @@ The boundary is deliberate: **neither REST nor MCP accepts arbitrary rclone remo
 - JWT access-token validation against an external OAuth/OIDC issuer and JWKS.
 - Installs the official rclone binary during the Node build.
 - Keeps `rclone.conf` out of Git; provide it as a Heroku config var.
-- Maps logical areas such as `A`, `B`, `C`, `D` to shared-folder roots at runtime.
+- Maps logical storage aliases such as `MAIN`, `A`, `B`, `C`, `D` to rclone roots at runtime. `MAIN` is the canonical Nyx bootstrap source; other configured aliases remain available to storage tools.
 - Lists/stats only below configured roots.
 - Reports account capacity for remotes backing configured roots.
 - Queues cross-account file copies.
@@ -50,7 +50,8 @@ Shared folders are the GPT-visible control surface. Private rclone remotes are t
 
 ## MCP tools
 
-- `nyx_areas` — list configured logical shared areas.
+- `nyx_ini` — resolve and verify the canonical Nyx bootstrap from the configured `MAIN` drive, with optional Area hydration.
+- `nyx_areas` — list configured logical storage aliases.
 - `nyx_list` — list files/folders below one shared root.
 - `nyx_stat` — inspect metadata, hashes, size, and owner.
 - `nyx_capacity` — report account quota information.
@@ -69,10 +70,24 @@ Shared folders are the GPT-visible control surface. Private rclone remotes are t
 
 ```json
 {
+  "MAIN": { "remote": "linuxofpower", "root": "." },
   "A": { "remote": "drive_a", "root": "A_Shared", "expectedOwner": "account-a@example.com" },
-  "B": { "remote": "drive_b", "root": "B_Shared", "expectedOwner": "account-b@example.com" }
+  "B": { "remote": "drive_b", "root": "B_Shared", "expectedOwner": "account-b@example.com" },
+  "C": { "remote": "drive_c", "root": "C_Shared", "expectedOwner": "account-c@example.com" },
+  "D": { "remote": "drive_d", "root": "D_Shared", "expectedOwner": "account-d@example.com" }
 }
 ```
+
+`MAIN` should point at the root of the `linuxofpower` Google Drive account. The canonical initialization defaults are:
+
+```text
+NYX_INIT_AREA=MAIN
+NYX_PATHS_REGISTRY_PATH=ChatGPT/1_body/1_areas_v0/NoteFlow/3_resources/SYSTEM/paths.md
+NYX_AREAS_ROOT_PATH=ChatGPT/1_body/1_areas_v0
+NYX_YARO_PREFIX=YaRoute
+```
+
+Only `MAIN` is required for `nyx_ini`. Additional aliases are optional and become immediately usable through `nyx_areas`, `nyx_list`, `nyx_stat`, `nyx_capacity`, and copy jobs when present in `NYX_SHARED_ROOTS_JSON`.
 
 `NYX_API_KEY`
 : Optional separate secret used by the protected REST storage API.
