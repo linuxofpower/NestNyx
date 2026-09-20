@@ -28,10 +28,10 @@ export class InitService {
       throw new BadRequestException('Invalid initialization target');
     }
 
-    const area = process.env.NYX_INIT_AREA?.trim() || 'C';
+    const area = process.env.NYX_INIT_AREA?.trim() || 'MAIN';
     const registryPath =
       process.env.NYX_PATHS_REGISTRY_PATH?.trim() ||
-      '🪼👁️📡YaRoute/1_depository/3_subfooter/2_areas_v0/NoteFlow/3_resources/SYSTEM/paths.md';
+      'ChatGPT/1_body/1_areas_v0/NoteFlow/3_resources/SYSTEM/paths.md';
 
     const registryTarget = this.roots.resolve(area, registryPath);
     const [{ stdout: registryMarkdown }, registryStat] = await Promise.all([
@@ -217,7 +217,7 @@ export class InitService {
   ) {
     const root =
       process.env.NYX_AREAS_ROOT_PATH?.trim() ||
-      '🪼👁️📡YaRoute/1_depository/3_subfooter/2_areas_v0';
+      'ChatGPT/1_body/1_areas_v0';
 
     const base = path.posix.join(root, target);
     const files = {
@@ -249,7 +249,7 @@ export class InitService {
   }
 
   private repositoryPathToStoragePath(repositoryPath: string) {
-    const prefix = process.env.NYX_YARO_PREFIX?.trim() || '🪼👁️📡YaRoute';
+    const prefix = process.env.NYX_YARO_PREFIX?.trim() || 'YaRoute';
     if (repositoryPath === 'YaRoute') return prefix;
     if (repositoryPath.startsWith('YaRoute/')) {
       return `${prefix}/${repositoryPath.slice('YaRoute/'.length)}`;
