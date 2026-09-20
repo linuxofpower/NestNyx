@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import { InitService } from '../init/init.service';
 import { JobStoreService } from '../storage/job-store.service';
 import { StorageService } from '../storage/storage.service';
 import { CopyJobPayload } from '../storage/storage.types';
@@ -15,6 +16,7 @@ export class McpService {
   constructor(
     private readonly storage: StorageService,
     private readonly jobs: JobStoreService,
+    private readonly init: InitService,
   ) {
     const handler = createMcpHandler(() => this.buildServer());
     this.nodeHandler = toNodeHandler(handler, {
@@ -29,8 +31,30 @@ export class McpService {
   private buildServer() {
     const server = new McpServer({
       name: 'NestNyx',
-      version: '0.3.0',
+      version: '0.4.0',
     });
+
+    server.registerTool(
+      'nyx_ini',
+      {
+        title: 'Initialize Nyx runtime context',
+        description:
+          'Resolve the current paths registry, verify canonical Head/Body/Footer and the Yaro command table, create or continue the initialization session, and optionally hydrate an Area such as Mental. Initialization does not rewrite core bundles or Area state.',
+        inputSchema: z.object({
+          target: z.string().min(1).max(64).optional(),
+          scope: z.enum(['local', 'global']).optional().default('local'),
+          sessionId: z.string().uuid().optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async ({ target, scope, sessionId }) =>
+        this.safeTool(() => this.init.initialize({ target, scope, sessionId })),
+    );
 
     server.registerTool(
       'nyx_areas',
