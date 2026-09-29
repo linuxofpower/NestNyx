@@ -49,7 +49,7 @@ export class InitService {
     const storageArea = process.env.NYX_INIT_AREA?.trim() || 'MAIN';
     const registryPath =
       process.env.NYX_PATHS_REGISTRY_PATH?.trim() ||
-      'ChatGPT/1_body/1_areas_v0/NoteFlow/3_resources/SYSTEM/paths.md';
+      'Documents/Nyxpad/paths.md';
 
     const registryTarget = this.roots.resolve(storageArea, registryPath);
     const [{ stdout: registryMarkdown }, registryStat] = await Promise.all([
@@ -205,6 +205,7 @@ export class InitService {
       parsed,
       depth,
     );
+    visibleSources.basic_maps = templateMap;
     for (const [name, evidence] of Object.entries(visibleSources)) {
       if (!(evidence as Evidence).loaded) {
         warnings.push(
@@ -521,6 +522,7 @@ export class InitService {
         path: repositoryPath,
         sha256: this.sha256(normalized),
         bytes: Buffer.byteLength(normalized),
+        document: normalized,
         summary: {
           firstLine:
             normalized
