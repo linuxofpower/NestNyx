@@ -31,7 +31,7 @@ export class McpService {
   private buildServer() {
     const server = new McpServer({
       name: 'NestNyx',
-      version: '0.4.0',
+      version: '0.5.0',
     });
 
     server.registerTool(
@@ -39,7 +39,7 @@ export class McpService {
       {
         title: 'Initialize Nyx runtime context',
         description:
-          'Resolve the current paths registry, verify canonical Head/Body/Footer and the Yaro command table, create or continue the initialization session, and optionally hydrate an Area such as Mental. Initialization does not rewrite core bundles or Area state.',
+          'Resolve the current Nyx bootstrap: verify canonical Head/Body/Footer, Head paths.json and nyxcli.json, live paths.md plus pending overlays, nyx_entry, Template map/index, then optionally hydrate an Area. Pending overlays remain noncanonical and initialization does not rewrite core bundles or Area state.',
         inputSchema: z.object({
           target: z.string().min(1).max(64).optional(),
           scope: z.enum(['local', 'global']).optional().default('local'),
