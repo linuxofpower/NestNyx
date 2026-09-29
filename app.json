@@ -49,7 +49,7 @@
       "value": "ChatGPT/1_body/1_areas_v0"
     },
     "NYX_YARO_PREFIX": {
-      "description": "Relative YaRoute root below NYX_INIT_AREA used to verify canonical core bundle paths.",
+      "description": "Relative YaRoute root below NYX_INIT_AREA. Current initialization also resolves the live 3_template overlays and Template map/index.",
       "value": "YaRoute"
     }
   }
