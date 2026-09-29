@@ -44,6 +44,7 @@ export class McpService {
           target: z.string().min(1).max(64).optional(),
           scope: z.enum(['local', 'global']).optional().default('local'),
           sessionId: z.string().uuid().optional(),
+          depth: z.enum(['basic', 'normal', 'deep']).optional().default('normal'),
         }),
         annotations: {
           readOnlyHint: false,
@@ -52,8 +53,8 @@ export class McpService {
           openWorldHint: false,
         },
       },
-      async ({ target, scope, sessionId }) =>
-        this.safeTool(() => this.init.initialize({ target, scope, sessionId })),
+      async ({ target, scope, sessionId, depth }) =>
+        this.safeTool(() => this.init.initialize({ target, scope, sessionId, depth })),
     );
 
     server.registerTool(
