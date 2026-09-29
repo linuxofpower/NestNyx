@@ -49,7 +49,7 @@ export class InitService {
     const storageArea = process.env.NYX_INIT_AREA?.trim() || 'MAIN';
     const registryPath =
       process.env.NYX_PATHS_REGISTRY_PATH?.trim() ||
-      'ChatGPT/1_body/1_areas_v0/NoteFlow/3_resources/SYSTEM/paths.md';
+      'Documents/Nyxpad/paths.md';
 
     const registryTarget = this.roots.resolve(storageArea, registryPath);
     const [{ stdout: registryMarkdown }, registryStat] = await Promise.all([
@@ -205,10 +205,23 @@ export class InitService {
       parsed,
       depth,
     );
+    visibleSources.basic_maps = templateMap;
     for (const [name, evidence] of Object.entries(visibleSources)) {
       if (!(evidence as Evidence).loaded) {
         warnings.push(
           `Visible initialization source ${name} failed: ${(evidence as Evidence).error}`,
+        );
+      }
+    }
+
+    const normalAreas: Record<string, any> = {};
+    if (depth !== 'basic') {
+      for (const [areaName, pointer] of Object.entries(parsed.areas)) {
+        normalAreas[areaName] = await this.hydrateArea(
+          storageArea,
+          areaName,
+          pointer,
+          warnings,
         );
       }
     }
@@ -248,8 +261,20 @@ export class InitService {
     const visibleReady = Object.values(visibleSources).every(
       (item) => (item as Evidence).loaded,
     );
+    const normalStateReady =
+      depth === 'basic' ||
+      Object.entries(normalAreas).every(([areaName, value]) => {
+        if (!value?.state) return false;
+        if (areaName.toLowerCase() === 'noteflow' && !value?.todo) return false;
+        if (areaName.toLowerCase() === 'filefilter' && !value?.paths) return false;
+        return true;
+      });
     const mandatoryReady =
-      coreReady && canonicalMachineReady && bootstrapReady && visibleReady;
+      coreReady &&
+      canonicalMachineReady &&
+      bootstrapReady &&
+      visibleReady &&
+      normalStateReady;
     const readiness: InitReadiness = !mandatoryReady
       ? 'NOT_READY'
       : warnings.length
@@ -299,6 +324,7 @@ export class InitService {
         pendingOverlaysRemainNoncanonical: true,
       },
       visibleSources,
+      normalAreas,
       area: areaHydration ?? null,
       warnings,
       mutation: {
@@ -521,6 +547,7 @@ export class InitService {
         path: repositoryPath,
         sha256: this.sha256(normalized),
         bytes: Buffer.byteLength(normalized),
+        document: normalized,
         summary: {
           firstLine:
             normalized
@@ -661,6 +688,15 @@ export class InitService {
         storageArea,
         [path.posix.join(base, '0_state/todo.json')],
         'NoteFlow todo state',
+        warnings,
+      );
+    }
+
+    if (target.toLowerCase() === 'filefilter') {
+      result.paths = await this.readFirstJson(
+        storageArea,
+        [path.posix.join(base, '0_state/paths.json')],
+        'FileFilter paths state',
         warnings,
       );
     }
