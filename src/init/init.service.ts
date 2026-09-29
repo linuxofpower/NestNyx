@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,12 +7,28 @@ import { RcloneService } from '../storage/rclone.service';
 import { SharedRootsService } from '../storage/shared-roots.service';
 import { InitSessionStoreService } from './init-session-store.service';
 import { parsePathsRegistry } from './paths-registry.parser';
-import { CorePointer, InitInput, InitReadiness } from './init.types';
+import {
+  BundleMemberPointer,
+  CorePointer,
+  InitInput,
+  InitReadiness,
+  ParsedPathsRegistry,
+} from './init.types';
 
 type ZipEntry = { getData(): Buffer };
 type ZipReader = { getEntry(name: string): ZipEntry | null };
 type ZipCtor = new (filename: string) => ZipReader;
 const AdmZip = require('adm-zip') as ZipCtor;
+
+type Evidence = {
+  loaded: boolean;
+  path: string;
+  sha256?: string;
+  bytes?: number;
+  error?: string;
+  document?: unknown;
+  summary?: Record<string, unknown>;
+};
 
 @Injectable()
 export class InitService {
@@ -28,12 +45,12 @@ export class InitService {
       throw new BadRequestException('Invalid initialization target');
     }
 
-    const area = process.env.NYX_INIT_AREA?.trim() || 'MAIN';
+    const storageArea = process.env.NYX_INIT_AREA?.trim() || 'MAIN';
     const registryPath =
       process.env.NYX_PATHS_REGISTRY_PATH?.trim() ||
       'ChatGPT/1_body/1_areas_v0/NoteFlow/3_resources/SYSTEM/paths.md';
 
-    const registryTarget = this.roots.resolve(area, registryPath);
+    const registryTarget = this.roots.resolve(storageArea, registryPath);
     const [{ stdout: registryMarkdown }, registryStat] = await Promise.all([
       this.rclone.run(['cat', registryTarget]),
       this.rclone.json(['lsjson', registryTarget, '--stat', '--hash']),
@@ -43,31 +60,143 @@ export class InitService {
     const warnings: string[] = [];
 
     for (const role of ['Head', 'Body', 'Footer'] as const) {
-      if (!parsed.core[role]) warnings.push(`Missing canonical ${role} pointer in paths registry`);
+      if (!parsed.core[role]) {
+        warnings.push(`Missing canonical ${role} pointer in live paths registry`);
+      }
     }
-    if (!parsed.commandTable) warnings.push('Missing canonical Yaro command-table pointer in paths registry');
+    if (!parsed.canonicalCli) {
+      warnings.push('Missing canonical executable CLI pointer in live paths registry');
+    }
+    if (!parsed.compatibilityCommandTable) {
+      warnings.push('Missing compatibility command-table pointer in live paths registry');
+    }
 
-    const coreVerification = await Promise.all(
-      (['Head', 'Body', 'Footer'] as const)
+    const head = parsed.core.Head
+      ? await this.loadCoreBundle(storageArea, parsed.core.Head)
+      : undefined;
+
+    const otherCore = await Promise.all(
+      (['Body', 'Footer'] as const)
         .map((role) => parsed.core[role])
         .filter((pointer): pointer is CorePointer => Boolean(pointer))
-        .map((pointer) => this.verifyCore(area, pointer)),
+        .map((pointer) => this.verifyCore(storageArea, pointer)),
     );
+
+    const coreVerification = [
+      ...(head ? [head.verification] : []),
+      ...otherCore,
+    ];
 
     for (const verification of coreVerification) {
       if (!verification.verified) {
-        warnings.push(`${verification.role} verification failed: ${verification.error}`);
+        warnings.push(
+          `${verification.role} verification failed: ${verification.error || 'unknown error'}`,
+        );
       }
     }
 
-    const commandVerification = await this.verifyCommandTable(
-      area,
-      parsed.core.Head,
-      parsed.commandTable?.file,
-      parsed.commandTable?.bundlePath,
+    let canonicalMachine: Record<string, unknown> | null = null;
+    let compatibility: Record<string, unknown> | null = null;
+    let headTopology: Record<string, unknown> | null = null;
+
+    try {
+      if (head?.verification.verified && head.localPath) {
+        const zip = new AdmZip(head.localPath);
+        const canonicalPaths = this.readJsonMember(
+          zip,
+          'LEAD/Core_Skills/FileFilter/paths.json',
+        );
+        const canonicalCli = this.readJsonPointer(
+          zip,
+          parsed.canonicalCli,
+          'LEAD/Core_Skills/YaRoCLI/nyxcli.json',
+        );
+        const compatibilityTable = this.readJsonPointer(
+          zip,
+          parsed.compatibilityCommandTable,
+          'FILE/yaro_command_table_v015.json',
+        );
+
+        canonicalMachine = {
+          paths: canonicalPaths,
+          cli: canonicalCli,
+        };
+        compatibility = compatibilityTable;
+
+        const projectConfig = this.readOptionalJsonMember(zip, 'project_config.json');
+        const projectIndex = this.readOptionalJsonMember(zip, 'project_index.json');
+        const projectMap = this.readOptionalTextMember(zip, 'project_map.md');
+        headTopology = {
+          projectConfig,
+          projectIndex,
+          projectMap,
+          available: Boolean(projectConfig || projectIndex || projectMap),
+        };
+      }
+    } catch (error) {
+      warnings.push(
+        `Canonical Head machine-state verification failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      if (head?.localPath) fs.rmSync(head.localPath, { force: true });
+    }
+
+    const tempPaths = await this.readJsonEvidence(
+      storageArea,
+      this.routePath(
+        parsed,
+        'temp_paths',
+        'YaRoute/0_repository/3_template/staging/drafts/temp_paths.json',
+      ),
+      true,
     );
-    if (!commandVerification.verified) {
-      warnings.push(`Command-table verification failed: ${commandVerification.error}`);
+    const tempNyxCli = await this.readJsonEvidence(
+      storageArea,
+      this.routePath(
+        parsed,
+        'temp_nyxcli',
+        'YaRoute/0_repository/3_template/staging/drafts/temp_nyxcli.json',
+      ),
+      true,
+    );
+    const nyxEntry = await this.readTextEvidence(
+      storageArea,
+      this.routePath(
+        parsed,
+        'nyx_entry_temp',
+        'YaRoute/0_repository/3_template/staging/drafts/temp_files/nyx_entry.md',
+      ),
+    );
+    const templateMap = await this.readTextEvidence(
+      storageArea,
+      this.routePath(
+        parsed,
+        'template_map',
+        'YaRoute/0_repository/3_template/template_map.md',
+      ),
+    );
+    const templateIndex = await this.readJsonEvidence(
+      storageArea,
+      this.routePath(
+        parsed,
+        'template_index',
+        'YaRoute/0_repository/3_template/template_index.json',
+      ),
+      false,
+    );
+
+    for (const [name, evidence] of [
+      ['temp_paths.json', tempPaths],
+      ['temp_nyxcli.json', tempNyxCli],
+      ['nyx_entry.md', nyxEntry],
+      ['template_map.md', templateMap],
+      ['template_index.json', templateIndex],
+    ] as const) {
+      if (!evidence.loaded) {
+        warnings.push(`Required bootstrap source ${name} failed: ${evidence.error}`);
+      }
     }
 
     let areaHydration: unknown = undefined;
@@ -76,15 +205,33 @@ export class InitService {
       if (!pointer) {
         warnings.push(`Target Area ${target} is not present in Operational Area routing`);
       } else {
-        areaHydration = await this.hydrateArea(area, target, pointer, warnings);
+        areaHydration = await this.hydrateArea(
+          storageArea,
+          target,
+          pointer,
+          warnings,
+        );
       }
     }
 
-    const mandatoryReady =
+    const coreReady =
       coreVerification.length === 3 &&
-      coreVerification.every((item) => item.verified) &&
-      commandVerification.verified;
+      coreVerification.every((item) => item.verified);
+    const canonicalMachineReady = Boolean(
+      canonicalMachine &&
+        (canonicalMachine.paths as any)?.verified &&
+        (canonicalMachine.cli as any)?.verified &&
+        (compatibility as any)?.verified,
+    );
+    const bootstrapReady = [
+      tempPaths,
+      tempNyxCli,
+      nyxEntry,
+      templateMap,
+      templateIndex,
+    ].every((item) => item.loaded);
 
+    const mandatoryReady = coreReady && canonicalMachineReady && bootstrapReady;
     const readiness: InitReadiness = !mandatoryReady
       ? 'NOT_READY'
       : warnings.length
@@ -92,21 +239,45 @@ export class InitService {
         : 'READY';
 
     const receipt = {
-      schema: 'nyx.initialization.receipt.v1',
+      schema: 'nyx.initialization.receipt.v2',
       initializedAt: new Date().toISOString(),
       readiness,
       scope,
       target: target ?? null,
+      authoritySource: 'drive',
       authority: {
         registry: {
-          area,
+          area: storageArea,
           path: registryPath,
           stat: registryStat,
+          sha256: this.sha256(registryMarkdown),
         },
         core: parsed.core,
         coreVerification,
-        commandTable: parsed.commandTable ?? null,
-        commandVerification,
+        canonicalCli: parsed.canonicalCli ?? null,
+        compatibilityCommandTable: parsed.compatibilityCommandTable ?? null,
+        canonicalMachine,
+        compatibility,
+      },
+      bootstrap: {
+        order: [
+          'nyx_entry',
+          'canonical paths.json + live paths.md + temp_paths overlay',
+          'canonical nyxcli.json + temp_nyxcli overlay',
+          'template_map.md + template_index.json',
+          'project topology when canonicalized/available',
+          'command/Area-required sources',
+          'execute',
+          'verify',
+          'report',
+        ],
+        nyxEntry,
+        tempPaths,
+        tempNyxCli,
+        templateMap,
+        templateIndex,
+        projectTopology: headTopology,
+        pendingOverlaysRemainNoncanonical: true,
       },
       area: areaHydration ?? null,
       warnings,
@@ -135,71 +306,215 @@ export class InitService {
     };
   }
 
-  private async verifyCore(area: string, pointer: CorePointer) {
-    const relativePath = this.repositoryPathToStoragePath(pointer.repositoryPath);
-    const target = this.roots.resolve(area, relativePath);
+  private async loadCoreBundle(area: string, pointer: CorePointer) {
+    const storagePath = this.repositoryPathToStoragePath(pointer.repositoryPath);
+    const target = this.roots.resolve(area, storagePath);
+    const tempFile = path.join(
+      os.tmpdir(),
+      `nyx-${pointer.role.toLowerCase()}-${process.pid}-${Date.now()}.zip`,
+    );
+
     try {
       const stat = await this.rclone.json(['lsjson', target, '--stat', '--hash']);
+      await this.rclone.run(['copyto', target, tempFile]);
+      const actualSha256 = this.sha256(fs.readFileSync(tempFile));
+      const hashMatch = pointer.expectedSha256
+        ? actualSha256 === pointer.expectedSha256
+        : null;
+
       return {
-        role: pointer.role,
+        localPath: tempFile,
+        verification: {
+          role: pointer.role,
+          verified: hashMatch !== false,
+          repositoryPath: pointer.repositoryPath,
+          storagePath,
+          expectedDriveId: pointer.driveId,
+          expectedSha256: pointer.expectedSha256 ?? null,
+          actualSha256,
+          hashMatch,
+          stat,
+        },
+      };
+    } catch (error) {
+      fs.rmSync(tempFile, { force: true });
+      return {
+        localPath: undefined,
+        verification: {
+          role: pointer.role,
+          verified: false,
+          repositoryPath: pointer.repositoryPath,
+          storagePath,
+          expectedDriveId: pointer.driveId,
+          expectedSha256: pointer.expectedSha256 ?? null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  private async verifyCore(area: string, pointer: CorePointer) {
+    const loaded = await this.loadCoreBundle(area, pointer);
+    if (loaded.localPath) fs.rmSync(loaded.localPath, { force: true });
+    return loaded.verification;
+  }
+
+  private readJsonPointer(
+    zip: ZipReader,
+    pointer: BundleMemberPointer | undefined,
+    fallbackMember: string,
+  ) {
+    const member = this.memberFrom(pointer?.bundlePath) || fallbackMember;
+    const result = this.readJsonMember(zip, member);
+    if (
+      result.verified &&
+      pointer?.expectedSha256 &&
+      result.sha256 !== pointer.expectedSha256
+    ) {
+      return {
+        ...result,
+        verified: false,
+        expectedSha256: pointer.expectedSha256,
+        error: 'Bundle member SHA-256 does not match live paths registry',
+      };
+    }
+    return {
+      ...result,
+      expectedSha256: pointer?.expectedSha256 ?? null,
+    };
+  }
+
+  private readJsonMember(zip: ZipReader, member: string) {
+    const entry = zip.getEntry(member);
+    if (!entry) {
+      return { verified: false, member, error: `Bundle member not found: ${member}` };
+    }
+
+    try {
+      const data = entry.getData();
+      const document = JSON.parse(data.toString('utf8').replace(/^\uFEFF/, '')) as Record<
+        string,
+        unknown
+      >;
+      return {
         verified: true,
-        repositoryPath: pointer.repositoryPath,
-        storagePath: relativePath,
-        expectedDriveId: pointer.driveId,
-        stat,
+        member,
+        sha256: this.sha256(data),
+        bytes: data.length,
+        schema: document.schema ?? null,
+        version: document.version ?? null,
+        role: document.role ?? null,
+        commandCount:
+          document.commands && typeof document.commands === 'object'
+            ? Object.keys(document.commands as Record<string, unknown>).length
+            : undefined,
+        bootstrapOrder: Array.isArray(document.bootstrap_order)
+          ? document.bootstrap_order
+          : undefined,
       };
     } catch (error) {
       return {
-        role: pointer.role,
         verified: false,
-        repositoryPath: pointer.repositoryPath,
-        storagePath: relativePath,
-        expectedDriveId: pointer.driveId,
+        member,
         error: error instanceof Error ? error.message : String(error),
       };
     }
   }
 
-  private async verifyCommandTable(
-    area: string,
-    head: CorePointer | undefined,
-    expectedFile: string | undefined,
-    bundlePath: string | undefined,
-  ) {
-    if (!head || !expectedFile || !bundlePath) {
-      return { verified: false, error: 'Head or command-table pointer is missing' };
-    }
-
-    const member = bundlePath.split('::')[1];
-    if (!member) return { verified: false, error: 'Command-table bundle member is missing' };
-
-    const remoteHead = this.roots.resolve(
-      area,
-      this.repositoryPathToStoragePath(head.repositoryPath),
-    );
-    const tempFile = path.join(os.tmpdir(), `nyx-head-${process.pid}-${Date.now()}.zip`);
-
+  private readOptionalJsonMember(zip: ZipReader, member: string) {
+    const entry = zip.getEntry(member);
+    if (!entry) return null;
     try {
-      await this.rclone.run(['copyto', remoteHead, tempFile]);
-      const zip = new AdmZip(tempFile);
-      const entry = zip.getEntry(member);
-      if (!entry) return { verified: false, error: `Bundle member not found: ${member}` };
-
-      const payload = JSON.parse(entry.getData().toString('utf8')) as Record<string, unknown>;
+      const data = entry.getData();
+      const document = JSON.parse(data.toString('utf8').replace(/^\uFEFF/, ''));
       return {
-        verified: true,
-        file: expectedFile,
         member,
-        schema: payload.schema ?? null,
-        version: payload.version ?? null,
+        sha256: this.sha256(data),
+        bytes: data.length,
+        schema: document?.schema ?? null,
+        version: document?.version ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private readOptionalTextMember(zip: ZipReader, member: string) {
+    const entry = zip.getEntry(member);
+    if (!entry) return null;
+    const data = entry.getData();
+    return {
+      member,
+      sha256: this.sha256(data),
+      bytes: data.length,
+    };
+  }
+
+  private async readJsonEvidence(
+    area: string,
+    repositoryPath: string,
+    includeDocument: boolean,
+  ): Promise<Evidence> {
+    try {
+      const storagePath = this.repositoryPathToStoragePath(repositoryPath);
+      const target = this.roots.resolve(area, storagePath);
+      const { stdout } = await this.rclone.run(['cat', target]);
+      const normalized = stdout.replace(/^\uFEFF/, '');
+      const document = JSON.parse(normalized) as Record<string, unknown>;
+      const evidence: Evidence = {
+        loaded: true,
+        path: repositoryPath,
+        sha256: this.sha256(normalized),
+        bytes: Buffer.byteLength(normalized),
+        summary: {
+          schema: document.schema ?? null,
+          version: document.version ?? null,
+          role: document.role ?? null,
+          state: document.state ?? null,
+          overrideCount: Array.isArray(document.overrides)
+            ? document.overrides.length
+            : undefined,
+        },
+      };
+      if (includeDocument) evidence.document = document;
+      return evidence;
+    } catch (error) {
+      return {
+        loaded: false,
+        path: repositoryPath,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async readTextEvidence(
+    area: string,
+    repositoryPath: string,
+  ): Promise<Evidence> {
+    try {
+      const storagePath = this.repositoryPathToStoragePath(repositoryPath);
+      const target = this.roots.resolve(area, storagePath);
+      const { stdout } = await this.rclone.run(['cat', target]);
+      const normalized = stdout.replace(/^\uFEFF/, '');
+      return {
+        loaded: true,
+        path: repositoryPath,
+        sha256: this.sha256(normalized),
+        bytes: Buffer.byteLength(normalized),
+        summary: {
+          firstLine:
+            normalized
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .find(Boolean) ?? null,
+        },
       };
     } catch (error) {
       return {
-        verified: false,
+        loaded: false,
+        path: repositoryPath,
         error: error instanceof Error ? error.message : String(error),
       };
-    } finally {
-      fs.rmSync(tempFile, { force: true });
     }
   }
 
@@ -218,42 +533,104 @@ export class InitService {
     const root =
       process.env.NYX_AREAS_ROOT_PATH?.trim() ||
       'ChatGPT/1_body/1_areas_v0';
-
     const base = path.posix.join(root, target);
-    const files = {
-      manifest: path.posix.join(base, 'area_paths_v001.json'),
-      state: path.posix.join(base, '0_state/state.json'),
-      config: path.posix.join(base, '0_state/config.json'),
-    };
 
-    const result: Record<string, unknown> = {
-      pointer,
-      storagePaths: files,
-    };
+    const result: Record<string, unknown> = { pointer };
+    result.manifest = await this.readFirstJson(
+      storageArea,
+      [
+        path.posix.join(base, 'area_paths.json'),
+        path.posix.join(base, 'area_paths_v001.json'),
+      ],
+      `Area ${target} manifest`,
+      warnings,
+    );
+    result.state = await this.readFirstJson(
+      storageArea,
+      [path.posix.join(base, '0_state/state.json')],
+      `Area ${target} state`,
+      warnings,
+    );
+    result.config = await this.readFirstJson(
+      storageArea,
+      [
+        path.posix.join(base, '0_state/configs.json'),
+        path.posix.join(base, '0_state/config.json'),
+      ],
+      `Area ${target} config`,
+      warnings,
+    );
 
-    for (const [name, relativePath] of Object.entries(files)) {
-      try {
-        const remote = this.roots.resolve(storageArea, relativePath);
-        const { stdout } = await this.rclone.run(['cat', remote]);
-        result[name] = JSON.parse(stdout);
-      } catch (error) {
-        warnings.push(
-          `Area ${target} ${name} hydration failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
+    if (target.toLowerCase() === 'noteflow') {
+      result.todo = await this.readFirstJson(
+        storageArea,
+        [path.posix.join(base, '0_state/todo.json')],
+        'NoteFlow todo state',
+        warnings,
+      );
     }
 
     return result;
   }
 
-  private repositoryPathToStoragePath(repositoryPath: string) {
-    const prefix = process.env.NYX_YARO_PREFIX?.trim() || 'YaRoute';
-    if (repositoryPath === 'YaRoute') return prefix;
-    if (repositoryPath.startsWith('YaRoute/')) {
-      return `${prefix}/${repositoryPath.slice('YaRoute/'.length)}`;
+  private async readFirstJson(
+    storageArea: string,
+    candidates: string[],
+    label: string,
+    warnings: string[],
+  ) {
+    const errors: string[] = [];
+    for (const candidate of candidates) {
+      try {
+        const remote = this.roots.resolve(storageArea, candidate);
+        const { stdout } = await this.rclone.run(['cat', remote]);
+        return {
+          path: candidate,
+          document: JSON.parse(stdout.replace(/^\uFEFF/, '')),
+        };
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
     }
-    return repositoryPath;
+    warnings.push(`${label} hydration failed: ${errors.join(' | ')}`);
+    return null;
+  }
+
+  private routePath(
+    parsed: ParsedPathsRegistry,
+    key: string,
+    fallback: string,
+  ) {
+    return this.normalizeRepositoryPath(
+      parsed.routes[key]?.repositoryPath || fallback,
+    );
+  }
+
+  private normalizeRepositoryPath(repositoryPath: string) {
+    return repositoryPath
+      .replace(
+        /^YaRoute\/0_repository\/3_subfooter(?=\/|$)/,
+        'YaRoute/0_repository/3_template',
+      )
+      .trim();
+  }
+
+  private repositoryPathToStoragePath(repositoryPath: string) {
+    const normalized = this.normalizeRepositoryPath(repositoryPath);
+    const prefix = process.env.NYX_YARO_PREFIX?.trim() || 'YaRoute';
+    if (normalized === 'YaRoute') return prefix;
+    if (normalized.startsWith('YaRoute/')) {
+      return `${prefix}/${normalized.slice('YaRoute/'.length)}`;
+    }
+    return normalized;
+  }
+
+  private memberFrom(bundlePath?: string) {
+    if (!bundlePath) return undefined;
+    return bundlePath.split('::')[1];
+  }
+
+  private sha256(value: string | Buffer) {
+    return createHash('sha256').update(value).digest('hex');
   }
 }
