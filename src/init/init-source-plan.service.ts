@@ -74,6 +74,7 @@ export class InitSourcePlanService {
       this.route(parsed, 'nyx_entry.md', 'nyx_entry_temp', false),
       this.route(parsed, 'template_map.md', 'template_map', false),
       this.route(parsed, 'template_index.json', 'template_index', false),
+      this.route(parsed, 'basic Maps', 'template_map', true),
       this.route(parsed, 'todo.md', 'todo_current', true),
       this.route(parsed, 'todo_week.md', 'todo_week', true),
       this.route(parsed, 'todo_month.md', 'todo_month', true),
@@ -83,7 +84,9 @@ export class InitSourcePlanService {
     if (depth !== 'basic') {
       sources.push({
         key: 'must_have.md',
-        rclonePath: process.env.NYX_MUST_HAVE_PATH?.trim(),
+        rclonePath:
+          process.env.NYX_MUST_HAVE_PATH?.trim() ||
+          'Documents/Notepad/0_active/must_have.md',
         required: true,
         visible: true,
       });
@@ -96,9 +99,36 @@ export class InitSourcePlanService {
           visible: false,
         });
       }
+      const specialized = this.specializedStatePaths();
+      for (const [key, rclonePath] of Object.entries(specialized)) {
+        sources.push({
+          key: `specialized:${key}`,
+          rclonePath,
+          required: true,
+          visible: false,
+        });
+      }
     }
 
     return sources;
+  }
+
+  private specializedStatePaths(): Record<string, string> {
+    const raw = process.env.NYX_INIT_SPECIALIZED_STATE_JSON?.trim();
+    if (!raw) {
+      return {
+        'NoteFlow todo.json':
+          'ChatGPT/1_body/1_areas_v0/NoteFlow/0_state/todo.json',
+        'FileFilter paths.json':
+          'ChatGPT/1_body/1_areas_v0/FileFilter/0_state/paths.json',
+      };
+    }
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([key, value]) => Boolean(key) && typeof value === 'string' && Boolean(value),
+      ),
+    );
   }
 
   private route(
