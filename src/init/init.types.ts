@@ -14,13 +14,23 @@ export type CorePointer = {
   repositoryPath: string;
   driveId: string;
   status: string;
+  expectedSha256?: string;
 };
 
-export type CommandTablePointer = {
+export type BundleMemberPointer = {
+  role: string;
   file: string;
   bundlePath: string;
   driveId: string;
   state: string;
+  expectedSha256?: string;
+};
+
+export type RoutePointer = {
+  key: string;
+  repositoryPath: string;
+  driveId: string;
+  state?: string;
 };
 
 export type AreaPointer = {
@@ -34,7 +44,9 @@ export type AreaPointer = {
 
 export type ParsedPathsRegistry = {
   core: Record<CoreRole, CorePointer | undefined>;
-  commandTable?: CommandTablePointer;
+  canonicalCli?: BundleMemberPointer;
+  compatibilityCommandTable?: BundleMemberPointer;
+  routes: Record<string, RoutePointer>;
   areas: Record<string, AreaPointer>;
 };
 
