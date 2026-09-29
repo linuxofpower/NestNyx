@@ -10,6 +10,6 @@ import { InitSessionStoreService } from './init-session-store.service';
   imports: [StorageModule, CommandModule],
   controllers: [InitController],
   providers: [InitService, InitSessionStoreService, InitCommandService],
-  exports: [InitService, InitSessionStoreService],
+  exports: [InitService, InitSessionStoreService, InitCommandService],
 })
 export class InitModule {}
