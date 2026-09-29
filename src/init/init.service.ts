@@ -214,6 +214,18 @@ export class InitService {
       }
     }
 
+    const normalAreas: Record<string, any> = {};
+    if (depth !== 'basic') {
+      for (const [areaName, pointer] of Object.entries(parsed.areas)) {
+        normalAreas[areaName] = await this.hydrateArea(
+          storageArea,
+          areaName,
+          pointer,
+          warnings,
+        );
+      }
+    }
+
     let areaHydration: unknown = undefined;
     if (target) {
       const pointer = parsed.areas[target];
@@ -249,8 +261,20 @@ export class InitService {
     const visibleReady = Object.values(visibleSources).every(
       (item) => (item as Evidence).loaded,
     );
+    const normalStateReady =
+      depth === 'basic' ||
+      Object.entries(normalAreas).every(([areaName, value]) => {
+        if (!value?.state) return false;
+        if (areaName.toLowerCase() === 'noteflow' && !value?.todo) return false;
+        if (areaName.toLowerCase() === 'filefilter' && !value?.paths) return false;
+        return true;
+      });
     const mandatoryReady =
-      coreReady && canonicalMachineReady && bootstrapReady && visibleReady;
+      coreReady &&
+      canonicalMachineReady &&
+      bootstrapReady &&
+      visibleReady &&
+      normalStateReady;
     const readiness: InitReadiness = !mandatoryReady
       ? 'NOT_READY'
       : warnings.length
@@ -300,6 +324,7 @@ export class InitService {
         pendingOverlaysRemainNoncanonical: true,
       },
       visibleSources,
+      normalAreas,
       area: areaHydration ?? null,
       warnings,
       mutation: {
@@ -663,6 +688,15 @@ export class InitService {
         storageArea,
         [path.posix.join(base, '0_state/todo.json')],
         'NoteFlow todo state',
+        warnings,
+      );
+    }
+
+    if (target.toLowerCase() === 'filefilter') {
+      result.paths = await this.readFirstJson(
+        storageArea,
+        [path.posix.join(base, '0_state/paths.json')],
+        'FileFilter paths state',
         warnings,
       );
     }
