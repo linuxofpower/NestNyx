@@ -40,6 +40,7 @@ export class InitService {
 
   async initialize(input: InitInput = {}) {
     const scope = input.scope ?? 'local';
+    const depth = input.depth ?? 'normal';
     const target = input.target?.trim() || undefined;
     if (target && !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(target)) {
       throw new BadRequestException('Invalid initialization target');
@@ -199,6 +200,19 @@ export class InitService {
       }
     }
 
+    const visibleSources = await this.loadVisibleSources(
+      storageArea,
+      parsed,
+      depth,
+    );
+    for (const [name, evidence] of Object.entries(visibleSources)) {
+      if (!(evidence as Evidence).loaded) {
+        warnings.push(
+          `Visible initialization source ${name} failed: ${(evidence as Evidence).error}`,
+        );
+      }
+    }
+
     let areaHydration: unknown = undefined;
     if (target) {
       const pointer = parsed.areas[target];
@@ -231,7 +245,11 @@ export class InitService {
       templateIndex,
     ].every((item) => item.loaded);
 
-    const mandatoryReady = coreReady && canonicalMachineReady && bootstrapReady;
+    const visibleReady = Object.values(visibleSources).every(
+      (item) => (item as Evidence).loaded,
+    );
+    const mandatoryReady =
+      coreReady && canonicalMachineReady && bootstrapReady && visibleReady;
     const readiness: InitReadiness = !mandatoryReady
       ? 'NOT_READY'
       : warnings.length
@@ -243,6 +261,7 @@ export class InitService {
       initializedAt: new Date().toISOString(),
       readiness,
       scope,
+      depth,
       target: target ?? null,
       authoritySource: 'drive',
       authority: {
@@ -279,6 +298,7 @@ export class InitService {
         projectTopology: headTopology,
         pendingOverlaysRemainNoncanonical: true,
       },
+      visibleSources,
       area: areaHydration ?? null,
       warnings,
       mutation: {
@@ -508,6 +528,81 @@ export class InitService {
               .map((line) => line.trim())
               .find(Boolean) ?? null,
         },
+      };
+    } catch (error) {
+      return {
+        loaded: false,
+        path: repositoryPath,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async loadVisibleSources(
+    storageArea: string,
+    parsed: ParsedPathsRegistry,
+    depth: 'basic' | 'normal' | 'deep',
+  ) {
+    const sources: Record<string, Evidence> = {};
+    const definitions: Array<[string, string]> = [
+      [
+        'todo_current',
+        this.routePath(parsed, 'todo_current', 'Documents/Notepad/todo.md'),
+      ],
+      [
+        'todo_week',
+        this.routePath(
+          parsed,
+          'todo_week',
+          'Documents/Notepad/0_active/todo_week.md',
+        ),
+      ],
+      [
+        'todo_month',
+        this.routePath(
+          parsed,
+          'todo_month',
+          'Documents/Notepad/0_active/todo_month.md',
+        ),
+      ],
+      [
+        'toget',
+        this.routePath(
+          parsed,
+          'toget',
+          'Documents/Notepad/0_active/toget.md',
+        ),
+      ],
+    ];
+
+    if (depth !== 'basic') {
+      definitions.push([
+        'must_have',
+        'Documents/Notepad/0_active/must_have.md',
+      ]);
+    }
+
+    for (const [name, repositoryPath] of definitions) {
+      sources[name] = await this.readTextDocument(storageArea, repositoryPath);
+    }
+    return sources;
+  }
+
+  private async readTextDocument(
+    area: string,
+    repositoryPath: string,
+  ): Promise<Evidence> {
+    try {
+      const storagePath = this.repositoryPathToStoragePath(repositoryPath);
+      const target = this.roots.resolve(area, storagePath);
+      const { stdout } = await this.rclone.run(['cat', target]);
+      const normalized = stdout.replace(/^\\uFEFF/, '');
+      return {
+        loaded: true,
+        path: repositoryPath,
+        sha256: this.sha256(normalized),
+        bytes: Buffer.byteLength(normalized),
+        document: normalized,
       };
     } catch (error) {
       return {
