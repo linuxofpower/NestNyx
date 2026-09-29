@@ -1,10 +1,10 @@
 import { Body, Controller, Post } from '@nestjs/common';
-import { InitService } from './init.service';
+import { InitCommandService } from './init-command.service';
 import { InitInput } from './init.types';
 
 @Controller('init')
 export class InitController {
-  constructor(private readonly init: InitService) {}
+  constructor(private readonly init: InitCommandService) {}
 
   @Post()
   initialize(@Body() body: InitInput) {
