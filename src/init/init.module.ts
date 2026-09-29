@@ -9,7 +9,7 @@ import { InitSessionStoreService } from './init-session-store.service';
 @Module({
   imports: [StorageModule, CommandModule],
   controllers: [InitController],
-  providers: [InitService, InitSessionStoreService],
+  providers: [InitService, InitSessionStoreService, InitCommandService],
   exports: [InitService, InitSessionStoreService],
 })
 export class InitModule {}
