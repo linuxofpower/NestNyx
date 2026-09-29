@@ -1,9 +1,11 @@
 export type InitScope = 'local' | 'global';
+export type InitDepth = 'basic' | 'normal' | 'deep';
 
 export type InitInput = {
   target?: string;
   scope?: InitScope;
   sessionId?: string;
+  depth?: InitDepth;
 };
 
 export type CoreRole = 'Head' | 'Body' | 'Footer';
