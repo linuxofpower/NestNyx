@@ -43,7 +43,11 @@ export class McpAuthService {
       }
 
       return true;
-    } catch {
+    } catch (error) {
+      console.error(
+        '[MCP OAuth] verification failed:',
+        error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      );
       this.challenge(res, 'invalid_token', 'Invalid or expired access token');
       return false;
     }
