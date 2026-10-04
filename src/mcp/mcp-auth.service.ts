@@ -9,7 +9,7 @@ export class McpAuthService {
 
   protectedResourceMetadata() {
     const publicUrl = this.required('NYX_PUBLIC_URL').replace(/\/$/, '');
-    const issuer = this.required('NYX_OAUTH_ISSUER').replace(/\/$/, '');
+    const issuer = this.required('NYX_OAUTH_ISSUER');
 
     return {
       resource: `${publicUrl}/mcp`,
@@ -50,7 +50,7 @@ export class McpAuthService {
   }
 
   private verify(token: string): Promise<JwtPayload> {
-    const issuer = this.required('NYX_OAUTH_ISSUER').replace(/\/$/, '');
+    const issuer = this.required('NYX_OAUTH_ISSUER');
     const audience = this.required('NYX_OAUTH_AUDIENCE');
     const algorithms = (process.env.NYX_OAUTH_ALGORITHMS || 'RS256')
       .split(',')
@@ -89,8 +89,10 @@ export class McpAuthService {
 
   private jwks(issuer: string) {
     if (!this.client) {
+      const issuerBase = issuer.replace(/\/$/, '');
       const uri =
-        process.env.NYX_OAUTH_JWKS_URI?.trim() || `${issuer}/.well-known/jwks.json`;
+        process.env.NYX_OAUTH_JWKS_URI?.trim() ||
+        `${issuerBase}/.well-known/jwks.json`;
       this.client = jwksClient({ jwksUri: uri, cache: true, rateLimit: true });
     }
     return this.client;
