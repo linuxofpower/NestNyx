@@ -1,6 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { InitService } from './init.service';
 import { InitInput } from './init.types';
+import { resolveNyxIniInput } from './ini-modifiers';
 
 @Controller('init')
 export class InitController {
@@ -8,6 +9,6 @@ export class InitController {
 
   @Post()
   initialize(@Body() body: InitInput) {
-    return this.init.initialize(body ?? {});
+    return this.init.initialize({ ...resolveNyxIniInput(body ?? {}), sessionId: body?.sessionId });
   }
 }
