@@ -4,6 +4,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { InitService } from '../init/init.service';
+import { resolveNyxIniInput } from '../init/ini-modifiers';
 import { JobStoreService } from '../storage/job-store.service';
 import { StorageService } from '../storage/storage.service';
 import { CopyJobPayload } from '../storage/storage.types';
@@ -41,10 +42,11 @@ export class McpService {
         description:
           'Resolve the current Nyx bootstrap: verify canonical Head/Body/Footer, Head paths.json and nyxcli.json, live paths.md plus pending overlays, nyx_entry, Template map/index, then optionally hydrate an Area. Pending overlays remain noncanonical and initialization does not rewrite core bundles or Area state.',
         inputSchema: z.object({
-          target: z.string().min(1).max(64).optional(),
-          scope: z.enum(['local', 'global']).optional().default('local'),
+          target: z.string().min(1).max(128).optional(),
+          modifiers: z.string().optional(),
+          scope: z.enum(['local', 'global']).optional(),
           sessionId: z.string().uuid().optional(),
-          depth: z.enum(['basic', 'normal', 'deep']).optional().default('normal'),
+          depth: z.enum(['basic', 'normal', 'deep']).optional(),
         }),
         annotations: {
           readOnlyHint: false,
@@ -53,8 +55,8 @@ export class McpService {
           openWorldHint: false,
         },
       },
-      async ({ target, scope, sessionId, depth }) =>
-        this.safeTool(() => this.init.initialize({ target, scope, sessionId, depth })),
+      async ({ target, modifiers, scope, sessionId, depth }) =>
+        this.safeTool(() => this.init.initialize({ ...resolveNyxIniInput({ target, modifiers, scope, depth }), sessionId })),
     );
 
     server.registerTool(
